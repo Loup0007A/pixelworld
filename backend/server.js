@@ -23,6 +23,16 @@ db.exec(`
     x INTEGER DEFAULT 0,
     y INTEGER DEFAULT 0,
     gold INTEGER DEFAULT 0,
+    level INTEGER DEFAULT 1,
+    xp INTEGER DEFAULT 0,
+    upgrade_speed INTEGER DEFAULT 0,
+    upgrade_teleport INTEGER DEFAULT 0,
+    upgrade_destruction INTEGER DEFAULT 0,
+    upgrade_gold_mult INTEGER DEFAULT 0,
+    upgrade_xp_mult INTEGER DEFAULT 0,
+    upgrade_build_range INTEGER DEFAULT 0,
+    upgrade_auto_collect INTEGER DEFAULT 0,
+    upgrade_shield INTEGER DEFAULT 0,
     created_at INTEGER
   );
 
@@ -33,6 +43,7 @@ db.exec(`
     color TEXT,
     player_id TEXT,
     hp INTEGER DEFAULT 0,
+    level INTEGER DEFAULT 1,
     created_at INTEGER,
     PRIMARY KEY (x, y)
   );
@@ -45,43 +56,291 @@ db.exec(`
   );
 `);
 
-// Constantes de jeu
+// Zone de spawn protégée (10x10 au centre)
+const SPAWN_ZONE = { minX: -5, maxX: 5, minY: -5, maxY: 5 };
+
+// Constantes de jeu - Bâtiments de base
 const BUILDING_COSTS = {
+  // Niveau 1
   wall: 20,
   tower: 15,
-  castle: (numCastles) => 50 * Math.pow(2, numCastles) // Coût exponentiel
+  castle: (numCastles) => 50 * Math.pow(2, numCastles),
+  
+  // Niveau 5
+  mine: 30,
+  farm: 40,
+  lumbermill: 35,
+  
+  // Niveau 10
+  bank: 100,
+  market: 120,
+  workshop: 150,
+  
+  // Niveau 15
+  laboratory: 200,
+  temple: 250,
+  arena: 300,
+  
+  // Niveau 20
+  fortress: 500,
+  monument: 600,
+  palace: 800,
+  
+  // Niveau 25
+  cathedral: 1000,
+  citadel: 1200,
+  oracle: 1500,
+  
+  // Niveau 30
+  nexus: 2000,
+  portal: 2500,
+  titan_forge: 3000,
+  
+  // Niveau 35
+  celestial_spire: 4000,
+  void_gate: 5000,
+  infinity_core: 6000,
+  
+  // Niveau 40
+  world_tree: 10000,
+  star_reactor: 15000,
+  quantum_vault: 20000
 };
 
 const BUILDING_HP = {
-  wall: 5,  // 5 secondes à détruire (1 HP/sec)
-  tower: 3,
-  castle: 10
+  wall: 5, tower: 3, castle: 10,
+  mine: 7, farm: 5, lumbermill: 6,
+  bank: 15, market: 12, workshop: 10,
+  laboratory: 20, temple: 25, arena: 18,
+  fortress: 30, monument: 35, palace: 40,
+  cathedral: 50, citadel: 60, oracle: 55,
+  nexus: 70, portal: 80, titan_forge: 90,
+  celestial_spire: 100, void_gate: 120, infinity_core: 140,
+  world_tree: 200, star_reactor: 250, quantum_vault: 300
 };
 
 const GOLD_REWARDS = {
-  wall: 1,
-  tower: 10,
-  castle: (numTowers, numCastles) => 100 * numTowers / Math.max(numCastles, 1)
+  wall: 1, tower: 10, castle: (numTowers, numCastles) => 100 * numTowers / Math.max(numCastles, 1),
+  mine: 20, farm: 25, lumbermill: 22,
+  bank: 50, market: 60, workshop: 75,
+  laboratory: 100, temple: 125, arena: 150,
+  fortress: 200, monument: 250, palace: 300,
+  cathedral: 500, citadel: 600, oracle: 700,
+  nexus: 1000, portal: 1200, titan_forge: 1500,
+  celestial_spire: 2000, void_gate: 2500, infinity_core: 3000,
+  world_tree: 5000, star_reactor: 7500, quantum_vault: 10000
+};
+
+// Revenus passifs par bâtiment (or/sec)
+const BUILDING_INCOME = {
+  tower: 2,
+  castle: (numTowers) => numTowers,
+  mine: 3,
+  farm: 4,
+  lumbermill: 3.5,
+  bank: (totalGold) => Math.floor(totalGold * 0.01),
+  market: 8,
+  workshop: 10,
+  laboratory: 15,
+  temple: 20,
+  arena: 25,
+  fortress: 10,
+  monument: 30,
+  palace: 40,
+  cathedral: 50,
+  citadel: 60,
+  oracle: 70,
+  nexus: 80,
+  portal: 100,
+  titan_forge: 120,
+  celestial_spire: 150,
+  void_gate: 200,
+  infinity_core: 250,
+  world_tree: 300,
+  star_reactor: 400,
+  quantum_vault: 500
+};
+
+// Coût d'amélioration
+const UPGRADE_COST_MULTIPLIER = 1.5;
+
+// XP par action
+const XP_REWARDS = {
+  placeBuilding: 10,
+  destroyBuilding: 15,
+  upgradeBuilding: 20,
+  move: 1,
+  upgradePlayer: 50
+};
+
+// XP requis par niveau
+function getXPForLevel(level) {
+  return Math.floor(100 * Math.pow(1.5, level - 1));
+}
+
+// Bâtiments débloqués par niveau
+const BUILDING_UNLOCKS = {
+  1: ['wall', 'tower', 'castle'],
+  5: ['mine', 'farm', 'lumbermill'],
+  10: ['bank', 'market', 'workshop'],
+  15: ['laboratory', 'temple', 'arena'],
+  20: ['fortress', 'monument', 'palace'],
+  25: ['cathedral', 'citadel', 'oracle'],
+  30: ['nexus', 'portal', 'titan_forge'],
+  35: ['celestial_spire', 'void_gate', 'infinity_core'],
+  40: ['world_tree', 'star_reactor', 'quantum_vault']
+};
+
+// Améliorations de personnage
+const PLAYER_UPGRADES = {
+  speed: {
+    name: 'Vitesse',
+    description: 'Réduit le cooldown de déplacement',
+    icon: '⚡',
+    maxLevel: 10,
+    baseCost: 100,
+    effect: (level) => 1 - (level * 0.05) // -5% par niveau
+  },
+  teleport: {
+    name: 'Téléportation',
+    description: 'Augmente la portée de déplacement',
+    icon: '🌀',
+    maxLevel: 5,
+    baseCost: 500,
+    effect: (level) => level + 1 // Portée de TP
+  },
+  destruction: {
+    name: 'Destruction Rapide',
+    description: 'Détruit plus vite',
+    icon: '💥',
+    maxLevel: 10,
+    baseCost: 200,
+    effect: (level) => 1 - (level * 0.1) // -10% par niveau
+  },
+  goldMultiplier: {
+    name: 'Multiplicateur Or',
+    description: 'Bonus sur gains d\'or',
+    icon: '💰',
+    maxLevel: 20,
+    baseCost: 300,
+    effect: (level) => 1 + (level * 0.1) // +10% par niveau
+  },
+  xpMultiplier: {
+    name: 'Multiplicateur XP',
+    description: 'Bonus sur gains d\'XP',
+    icon: '⭐',
+    maxLevel: 15,
+    baseCost: 250,
+    effect: (level) => 1 + (level * 0.15) // +15% par niveau
+  },
+  buildRange: {
+    name: 'Portée Construction',
+    description: 'Construis plus loin',
+    icon: '🔨',
+    maxLevel: 5,
+    baseCost: 400,
+    effect: (level) => level + 1 // Portée de construction
+  },
+  autoCollect: {
+    name: 'Collecte Auto',
+    description: 'Collecte l\'or automatiquement',
+    icon: '🤖',
+    maxLevel: 1,
+    baseCost: 5000,
+    effect: (level) => level > 0
+  },
+  shield: {
+    name: 'Bouclier',
+    description: 'Tes bâtiments ont +HP',
+    icon: '🛡️',
+    maxLevel: 10,
+    baseCost: 600,
+    effect: (level) => 1 + (level * 0.2) // +20% HP par niveau
+  }
 };
 
 // Préparer les requêtes
 const getPlayer = db.prepare('SELECT * FROM players WHERE id = ?');
-const createPlayer = db.prepare('INSERT INTO players (id, username, color, x, y, gold, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+const createPlayer = db.prepare(`INSERT INTO players (
+  id, username, color, x, y, gold, level, xp, 
+  upgrade_speed, upgrade_teleport, upgrade_destruction, upgrade_gold_mult, 
+  upgrade_xp_mult, upgrade_build_range, upgrade_auto_collect, upgrade_shield, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0, 0, ?)`);
 const updatePlayerPos = db.prepare('UPDATE players SET x = ?, y = ? WHERE id = ?');
 const updatePlayerGold = db.prepare('UPDATE players SET gold = ? WHERE id = ?');
+const updatePlayerLevel = db.prepare('UPDATE players SET level = ?, xp = ? WHERE id = ?');
+const updatePlayerUpgrade = db.prepare(`UPDATE players SET 
+  upgrade_speed = ?, upgrade_teleport = ?, upgrade_destruction = ?,
+  upgrade_gold_mult = ?, upgrade_xp_mult = ?, upgrade_build_range = ?,
+  upgrade_auto_collect = ?, upgrade_shield = ?
+  WHERE id = ?`);
 const getBuildingsNear = db.prepare('SELECT * FROM buildings WHERE x BETWEEN ? AND ? AND y BETWEEN ? AND ?');
 const getAllBuildingsByPlayer = db.prepare('SELECT * FROM buildings WHERE player_id = ?');
-const placeBuilding = db.prepare('INSERT OR REPLACE INTO buildings (x, y, type, color, player_id, hp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+const placeBuilding = db.prepare('INSERT OR REPLACE INTO buildings (x, y, type, color, player_id, hp, level, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
 const removeBuilding = db.prepare('DELETE FROM buildings WHERE x = ? AND y = ?');
 const getBuilding = db.prepare('SELECT * FROM buildings WHERE x = ? AND y = ?');
-const updateBuildingHP = db.prepare('UPDATE buildings SET hp = ? WHERE x = ? AND y = ?');
+const updateBuildingLevel = db.prepare('UPDATE buildings SET level = ? WHERE x = ? AND y = ?');
 const getAlliances = db.prepare('SELECT player2_id FROM alliances WHERE player1_id = ?');
 const createAlliance = db.prepare('INSERT OR IGNORE INTO alliances (player1_id, player2_id, created_at) VALUES (?, ?, ?)');
-const getAllPlayers = db.prepare('SELECT * FROM players');
+const getAllPlayers = db.prepare('SELECT * FROM players ORDER BY level DESC, gold DESC');
+const getLeaderboard = db.prepare(`
+  SELECT 
+    p.id, p.username, p.color, p.gold, p.level,
+    COUNT(b.x) as building_count,
+    SUM(CASE WHEN b.type = 'castle' THEN 1 ELSE 0 END) as castle_count
+  FROM players p
+  LEFT JOIN buildings b ON p.id = b.player_id
+  GROUP BY p.id
+  ORDER BY castle_count DESC, p.gold DESC
+  LIMIT 10
+`);
+
+// Fonctions utilitaires
+function isInSpawnZone(x, y) {
+  return x >= SPAWN_ZONE.minX && x <= SPAWN_ZONE.maxX &&
+         y >= SPAWN_ZONE.minY && y <= SPAWN_ZONE.maxY;
+}
+
+function findSafeSpawn() {
+  // Chercher un spawn libre autour de (0,0)
+  for (let radius = 6; radius < 20; radius++) {
+    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 8) {
+      const x = Math.round(Math.cos(angle) * radius);
+      const y = Math.round(Math.sin(angle) * radius);
+      
+      const building = getBuilding.get(x, y);
+      if (!building) {
+        return { x, y };
+      }
+    }
+  }
+  return { x: 0, y: 0 }; // Fallback
+}
+
+function giveXP(playerId, amount) {
+  const player = players.get(Array.from(players.entries()).find(([_, p]) => p.id === playerId)?.[0]);
+  if (!player) return;
+
+  player.xp += amount;
+  const requiredXP = getXPForLevel(player.level);
+
+  if (player.xp >= requiredXP) {
+    player.level++;
+    player.xp -= requiredXP;
+    updatePlayerLevel.run(player.level, player.xp, player.id);
+    
+    const socketId = Array.from(players.entries()).find(([_, p]) => p.id === playerId)?.[0];
+    if (socketId) {
+      io.to(socketId).emit('levelUp', { level: player.level, xp: player.xp });
+    }
+  } else {
+    updatePlayerLevel.run(player.level, player.xp, player.id);
+  }
+}
 
 // Connexion des joueurs
-const players = new Map(); // socketId -> playerData
-const destroyingBuildings = new Map(); // "x,y" -> {playerId, startTime, building}
+const players = new Map();
+const destroyingBuildings = new Map();
 
 io.on('connection', (socket) => {
   let playerId = null;
@@ -95,8 +354,17 @@ io.on('connection', (socket) => {
     
     if (!player) {
       const color = `#${Math.floor(Math.random()*16777215).toString(16)}`;
-      createPlayer.run(playerId, username || 'Joueur', color, 0, 0, 0, Date.now());
+      const spawn = findSafeSpawn();
+      createPlayer.run(playerId, username || 'Joueur', color, spawn.x, spawn.y, 0, 1, 0, Date.now());
       player = getPlayer.get(playerId);
+    } else {
+      // Vérifier si le joueur spawne sur un mur
+      const building = getBuilding.get(player.x, player.y);
+      if (building && building.type === 'wall') {
+        const spawn = findSafeSpawn();
+        updatePlayerPos.run(spawn.x, spawn.y, player.id);
+        player = getPlayer.get(playerId);
+      }
     }
 
     players.set(socket.id, { 
@@ -105,13 +373,26 @@ io.on('connection', (socket) => {
       color: player.color,
       x: player.x,
       y: player.y,
-      gold: player.gold
+      gold: player.gold,
+      level: player.level,
+      xp: player.xp,
+      upgrades: {
+        speed: player.upgrade_speed || 0,
+        teleport: player.upgrade_teleport || 0,
+        destruction: player.upgrade_destruction || 0,
+        goldMultiplier: player.upgrade_gold_mult || 0,
+        xpMultiplier: player.upgrade_xp_mult || 0,
+        buildRange: player.upgrade_build_range || 0,
+        autoCollect: player.upgrade_auto_collect || 0,
+        shield: player.upgrade_shield || 0
+      }
     });
 
     socket.emit('init', {
       playerId: player.id,
-      player: player,
-      onlinePlayers: Array.from(players.values())
+      player: players.get(socket.id),
+      onlinePlayers: Array.from(players.values()),
+      leaderboard: getLeaderboard.all()
     });
 
     socket.broadcast.emit('playerJoined', {
@@ -152,6 +433,22 @@ io.on('connection', (socket) => {
 
     const { x, y, type } = data;
     
+    // Vérifier zone de spawn
+    if (isInSpawnZone(x, y)) {
+      socket.emit('error', { message: 'Zone de spawn protégée !' });
+      return;
+    }
+
+    // Vérifier niveau requis
+    const requiredLevel = Object.entries(BUILDING_UNLOCKS).reverse().find(([lvl, buildings]) => 
+      buildings.includes(type)
+    )?.[0] || 1;
+
+    if (player.level < parseInt(requiredLevel)) {
+      socket.emit('error', { message: `Niveau ${requiredLevel} requis pour ${type} !` });
+      return;
+    }
+
     // Vérifier adjacence
     if (!isAdjacent(player.x, player.y, x, y)) {
       socket.emit('error', { message: 'Trop loin ! Place uniquement adjacent à toi.' });
@@ -183,7 +480,7 @@ io.on('connection', (socket) => {
 
     // Vérifier l'or
     if (player.gold < cost) {
-      socket.emit('error', { message: `Pas assez d'or ! Besoin de ${cost}` });
+      socket.emit('error', { message: `Pas assez d'or ! Besoin de ${cost}💰` });
       return;
     }
 
@@ -193,16 +490,74 @@ io.on('connection', (socket) => {
 
     // Placer le bâtiment
     const hp = BUILDING_HP[type];
-    placeBuilding.run(x, y, type, player.color, player.id, hp, Date.now());
+    placeBuilding.run(x, y, type, player.color, player.id, hp, 1, Date.now());
     
+    // Donner XP
+    giveXP(player.id, XP_REWARDS.placeBuilding);
+
     io.emit('buildingPlaced', { 
       x, y, type, 
       color: player.color, 
       playerId: player.id,
-      hp
+      hp,
+      level: 1
     });
 
     socket.emit('goldUpdate', { gold: player.gold });
+    socket.emit('xpUpdate', { xp: player.xp, level: player.level });
+    io.emit('leaderboardUpdate', getLeaderboard.all());
+  });
+
+  // Améliorer un bâtiment
+  socket.on('upgradeBuilding', (data) => {
+    const player = players.get(socket.id);
+    if (!player) return;
+
+    const { x, y } = data;
+
+    const building = getBuilding.get(x, y);
+    if (!building) {
+      socket.emit('error', { message: 'Aucun bâtiment ici !' });
+      return;
+    }
+
+    if (building.player_id !== player.id) {
+      socket.emit('error', { message: 'Ce n\'est pas ton bâtiment !' });
+      return;
+    }
+
+    // Calculer coût d'amélioration
+    let baseCost = BUILDING_COSTS[building.type];
+    if (typeof baseCost === 'function') {
+      const playerBuildings = getAllBuildingsByPlayer.all(player.id);
+      const numCastles = playerBuildings.filter(b => b.type === 'castle').length;
+      baseCost = baseCost(numCastles);
+    }
+    const upgradeCost = Math.floor(baseCost * UPGRADE_COST_MULTIPLIER * building.level);
+
+    if (player.gold < upgradeCost) {
+      socket.emit('error', { message: `Besoin de ${upgradeCost}💰 pour améliorer !` });
+      return;
+    }
+
+    // Vérifier adjacence
+    if (!isAdjacent(player.x, player.y, x, y)) {
+      socket.emit('error', { message: 'Trop loin pour améliorer !' });
+      return;
+    }
+
+    player.gold -= upgradeCost;
+    updatePlayerGold.run(player.gold, player.id);
+
+    const newLevel = building.level + 1;
+    updateBuildingLevel.run(newLevel, x, y);
+
+    // Donner XP
+    giveXP(player.id, XP_REWARDS.upgradeBuilding);
+
+    io.emit('buildingUpgraded', { x, y, level: newLevel });
+    socket.emit('goldUpdate', { gold: player.gold });
+    socket.emit('xpUpdate', { xp: player.xp, level: player.level });
   });
 
   // Commencer à détruire un bâtiment
@@ -268,6 +623,61 @@ io.on('connection', (socket) => {
     socket.emit('positionUpdate', { x, y });
   });
 
+  // Améliorer le personnage
+  socket.on('upgradePlayer', (data) => {
+    const player = players.get(socket.id);
+    if (!player) return;
+
+    const { upgradeType } = data;
+    const upgrade = PLAYER_UPGRADES[upgradeType];
+    
+    if (!upgrade) {
+      socket.emit('error', { message: 'Amélioration inconnue !' });
+      return;
+    }
+
+    const currentLevel = player.upgrades[upgradeType];
+    
+    if (currentLevel >= upgrade.maxLevel) {
+      socket.emit('error', { message: 'Niveau maximum atteint !' });
+      return;
+    }
+
+    const cost = Math.floor(upgrade.baseCost * Math.pow(1.5, currentLevel));
+
+    if (player.gold < cost) {
+      socket.emit('error', { message: `Besoin de ${cost}💰 !` });
+      return;
+    }
+
+    player.gold -= cost;
+    player.upgrades[upgradeType]++;
+    
+    updatePlayerGold.run(player.gold, player.id);
+    updatePlayerUpgrade.run(
+      player.upgrades.speed,
+      player.upgrades.teleport,
+      player.upgrades.destruction,
+      player.upgrades.goldMultiplier,
+      player.upgrades.xpMultiplier,
+      player.upgrades.buildRange,
+      player.upgrades.autoCollect,
+      player.upgrades.shield,
+      player.id
+    );
+
+    giveXP(player.id, XP_REWARDS.upgradePlayer);
+
+    socket.emit('goldUpdate', { gold: player.gold });
+    socket.emit('upgradeUpdate', { upgrades: player.upgrades });
+    socket.emit('xpUpdate', { xp: player.xp, level: player.level });
+  });
+
+  // Obtenir leaderboard
+  socket.on('getLeaderboard', () => {
+    socket.emit('leaderboardUpdate', getLeaderboard.all());
+  });
+
   // Créer alliance
   socket.on('createAlliance', (data) => {
     const player = players.get(socket.id);
@@ -307,24 +717,33 @@ io.on('connection', (socket) => {
 // Génération d'or (1/sec de base)
 setInterval(() => {
   players.forEach(player => {
-    // 1 or de base
-    let goldPerSec = 1;
+    let goldPerSec = 1; // Base
 
-    // Calculer les bonus des bâtiments
     const playerBuildings = getAllBuildingsByPlayer.all(player.id);
     const towers = playerBuildings.filter(b => b.type === 'tower');
     const castles = playerBuildings.filter(b => b.type === 'castle');
+    const mines = playerBuildings.filter(b => b.type === 'mine');
+    const banks = playerBuildings.filter(b => b.type === 'bank');
+    const fortresses = playerBuildings.filter(b => b.type === 'fortress');
 
-    // Tours : 2 or/sec chacune
-    goldPerSec += towers.length * 2;
+    // Tours : 2 or/sec * niveau
+    towers.forEach(t => goldPerSec += BUILDING_INCOME.tower * t.level);
 
-    // Châteaux : autant d'or que de tours
-    goldPerSec += castles.length * towers.length;
+    // Châteaux : autant d'or que de tours * niveau
+    castles.forEach(c => goldPerSec += BUILDING_INCOME.castle(towers.length) * c.level);
+
+    // Mines : 3 or/sec * niveau
+    mines.forEach(m => goldPerSec += BUILDING_INCOME.mine * m.level);
+
+    // Banques : 1% de l'or total * niveau
+    banks.forEach(b => goldPerSec += BUILDING_INCOME.bank(player.gold) * b.level);
+
+    // Forteresses : 10 or/sec * niveau
+    fortresses.forEach(f => goldPerSec += BUILDING_INCOME.fortress * f.level);
 
     player.gold += goldPerSec;
     updatePlayerGold.run(player.gold, player.id);
 
-    // Envoyer mise à jour
     const socketId = Array.from(players.entries()).find(([_, p]) => p.id === player.id)?.[0];
     if (socketId) {
       io.to(socketId).emit('goldUpdate', { gold: player.gold });
@@ -338,10 +757,9 @@ setInterval(() => {
   
   destroyingBuildings.forEach((data, key) => {
     const elapsed = now - data.startTime;
-    const requiredTime = data.building.hp * 1000; // hp secondes en ms
+    const requiredTime = data.building.hp * 1000;
 
     if (elapsed >= requiredTime) {
-      // Destruction terminée
       const [x, y] = key.split(',').map(Number);
       const building = getBuilding.get(x, y);
       
@@ -357,30 +775,42 @@ setInterval(() => {
           const numTowers = playerBuildings.filter(b => b.type === 'tower').length;
           const numCastles = playerBuildings.filter(b => b.type === 'castle').length;
           reward = GOLD_REWARDS.castle(numTowers, numCastles);
+        } else if (building.type === 'mine') {
+          reward = GOLD_REWARDS.mine;
+        } else if (building.type === 'bank') {
+          reward = GOLD_REWARDS.bank;
+        } else if (building.type === 'fortress') {
+          reward = GOLD_REWARDS.fortress;
         }
 
-        // Donner la récompense
+        // Bonus de niveau
+        reward *= building.level;
+
+        // Donner récompense + XP
         const destroyer = players.get(Array.from(players.entries()).find(([_, p]) => p.id === data.playerId)?.[0]);
         if (destroyer) {
           destroyer.gold += reward;
           updatePlayerGold.run(destroyer.gold, destroyer.id);
           
+          giveXP(destroyer.id, XP_REWARDS.destroyBuilding);
+          
           const socketId = Array.from(players.entries()).find(([_, p]) => p.id === destroyer.id)?.[0];
           if (socketId) {
             io.to(socketId).emit('goldUpdate', { gold: destroyer.gold });
             io.to(socketId).emit('destroyComplete', { x, y, reward });
+            io.to(socketId).emit('xpUpdate', { xp: destroyer.xp, level: destroyer.level });
           }
         }
 
-        // Supprimer le bâtiment
         removeBuilding.run(x, y);
         io.emit('buildingDestroyed', { x, y });
+        io.emit('leaderboardUpdate', getLeaderboard.all());
       }
 
       destroyingBuildings.delete(key);
     }
   });
-}, 100); // Vérifier toutes les 100ms
+}, 100);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

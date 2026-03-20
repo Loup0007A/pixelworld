@@ -3,6 +3,65 @@ const CELL_SIZE = 32;
 const CHUNK_SIZE = 50;
 const BACKEND_URL = window.location.origin;
 
+// Données des bâtiments (côté client)
+const BUILDINGS_DATA = {
+  // Niveau 1
+  wall: { name: 'Mur', icon: '🧱', cost: 20, income: 0, level: 1 },
+  tower: { name: 'Tour', icon: '🗼', cost: 15, income: 2, level: 1 },
+  castle: { name: 'Château', icon: '🏰', cost: 50, income: '×Tours', level: 1 },
+  
+  // Niveau 5
+  mine: { name: 'Mine', icon: '⛏️', cost: 30, income: 3, level: 5 },
+  farm: { name: 'Ferme', icon: '🌾', cost: 40, income: 4, level: 5 },
+  lumbermill: { name: 'Scierie', icon: '🪵', cost: 35, income: 3.5, level: 5 },
+  
+  // Niveau 10
+  bank: { name: 'Banque', icon: '🏦', cost: 100, income: '1%', level: 10 },
+  market: { name: 'Marché', icon: '🏪', cost: 120, income: 8, level: 10 },
+  workshop: { name: 'Atelier', icon: '🔧', cost: 150, income: 10, level: 10 },
+  
+  // Niveau 15
+  laboratory: { name: 'Laboratoire', icon: '🧪', cost: 200, income: 15, level: 15 },
+  temple: { name: 'Temple', icon: '⛪', cost: 250, income: 20, level: 15 },
+  arena: { name: 'Arène', icon: '⚔️', cost: 300, income: 25, level: 15 },
+  
+  // Niveau 20
+  fortress: { name: 'Forteresse', icon: '🏛️', cost: 500, income: 10, level: 20 },
+  monument: { name: 'Monument', icon: '🗿', cost: 600, income: 30, level: 20 },
+  palace: { name: 'Palais', icon: '👑', cost: 800, income: 40, level: 20 },
+  
+  // Niveau 25
+  cathedral: { name: 'Cathédrale', icon: '⛪', cost: 1000, income: 50, level: 25 },
+  citadel: { name: 'Citadelle', icon: '🏰', cost: 1200, income: 60, level: 25 },
+  oracle: { name: 'Oracle', icon: '🔮', cost: 1500, income: 70, level: 25 },
+  
+  // Niveau 30
+  nexus: { name: 'Nexus', icon: '🌌', cost: 2000, income: 80, level: 30 },
+  portal: { name: 'Portail', icon: '🌀', cost: 2500, income: 100, level: 30 },
+  titan_forge: { name: 'Forge Titan', icon: '⚒️', cost: 3000, income: 120, level: 30 },
+  
+  // Niveau 35
+  celestial_spire: { name: 'Tour Céleste', icon: '✨', cost: 4000, income: 150, level: 35 },
+  void_gate: { name: 'Porte Vide', icon: '🕳️', cost: 5000, income: 200, level: 35 },
+  infinity_core: { name: 'Noyau Infini', icon: '⚡', cost: 6000, income: 250, level: 35 },
+  
+  // Niveau 40
+  world_tree: { name: 'Arbre Monde', icon: '🌳', cost: 10000, income: 300, level: 40 },
+  star_reactor: { name: 'Réacteur Stellaire', icon: '⭐', cost: 15000, income: 400, level: 40 },
+  quantum_vault: { name: 'Coffre Quantique', icon: '💎', cost: 20000, income: 500, level: 40 }
+};
+
+const UPGRADES_DATA = {
+  speed: { name: 'Vitesse', icon: '⚡', desc: 'Cooldown déplacement', maxLevel: 10, baseCost: 100 },
+  teleport: { name: 'Téléportation', icon: '🌀', desc: 'Portée de déplacement', maxLevel: 5, baseCost: 500 },
+  destruction: { name: 'Destruction', icon: '💥', desc: 'Détruit plus vite', maxLevel: 10, baseCost: 200 },
+  goldMultiplier: { name: 'Mult. Or', icon: '💰', desc: '+10% or/niveau', maxLevel: 20, baseCost: 300 },
+  xpMultiplier: { name: 'Mult. XP', icon: '⭐', desc: '+15% XP/niveau', maxLevel: 15, baseCost: 250 },
+  buildRange: { name: 'Portée', icon: '🔨', desc: 'Construis plus loin', maxLevel: 5, baseCost: 400 },
+  autoCollect: { name: 'Auto-Collecte', icon: '🤖', desc: 'Or automatique', maxLevel: 1, baseCost: 5000 },
+  shield: { name: 'Bouclier', icon: '🛡️', desc: '+20% HP/niveau', maxLevel: 10, baseCost: 600 }
+};
+
 // État
 let socket = null;
 let canvas, ctx;
@@ -11,13 +70,14 @@ let playerData = null;
 let selectedBuildingType = null;
 let isDestroying = false;
 let destroyTarget = null;
+let leaderboard = [];
 
-// Stockage des données
-let buildings = new Map(); // "x,y" -> {x, y, type, color, playerId, hp}
-let players = new Map(); // playerId -> {id, username, color, x, y}
-let alliances = new Set(); // Set de playerIds alliés
+// Stockage
+let buildings = new Map();
+let players = new Map();
+let alliances = new Set();
 
-// Camera drag
+// Camera
 let isDragging = false;
 let dragStartX = 0, dragStartY = 0;
 let dragStartCamX = 0, dragStartCamY = 0;
@@ -31,8 +91,15 @@ const coordsDiv = document.getElementById('coords');
 const playerNameSpan = document.getElementById('playerName');
 const playerColorDiv = document.getElementById('playerColor');
 const goldDisplay = document.getElementById('goldDisplay');
+const levelDisplay = document.getElementById('levelDisplay');
+const upgradesBtn = document.getElementById('upgradesBtn');
+const leaderboardBtn = document.getElementById('leaderboardBtn');
+const buildingsBtn = document.getElementById('buildingsBtn');
 const playersBtn = document.getElementById('playersBtn');
 const helpBtn = document.getElementById('helpBtn');
+const upgradesPanel = document.getElementById('upgradesPanel');
+const leaderboardPanel = document.getElementById('leaderboardPanel');
+const buildingsPanel = document.getElementById('buildingsPanel');
 const playersPanel = document.getElementById('playersPanel');
 const helpPanel = document.getElementById('helpPanel');
 const playersList = document.getElementById('playersList');
@@ -41,8 +108,10 @@ const destroyIndicator = document.getElementById('destroyIndicator');
 const destroyBar = document.getElementById('destroyBar');
 const cancelDestroyBtn = document.getElementById('cancelDestroy');
 const castleCostSpan = document.getElementById('castleCost');
+const leaderboardContent = document.getElementById('leaderboardContent');
+const upgradesContent = document.getElementById('upgradesContent');
+const buildingsContent = document.getElementById('buildingsContent');
 
-// Init
 function init() {
   canvas = document.getElementById('canvas');
   ctx = canvas.getContext('2d');
@@ -50,13 +119,11 @@ function init() {
   resizeCanvas();
   window.addEventListener('resize', resizeCanvas);
 
-  // Événements login
   joinBtn.addEventListener('click', joinGame);
   usernameInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') joinGame();
   });
 
-  // Boutons de construction
   document.querySelectorAll('.build-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       selectedBuildingType = btn.dataset.type;
@@ -65,14 +132,12 @@ function init() {
     });
   });
 
-  // Bouton détruire
   destroyBtn.addEventListener('click', () => {
     selectedBuildingType = null;
     destroyBtn.classList.add('active');
     showNotification('Mode: Détruire');
   });
 
-  // Annuler destruction
   cancelDestroyBtn.addEventListener('click', () => {
     if (destroyTarget && socket) {
       socket.emit('cancelDestroy', destroyTarget);
@@ -82,15 +147,32 @@ function init() {
     destroyIndicator.classList.remove('active');
   });
 
-  // Panels
+  upgradesBtn.addEventListener('click', () => {
+    upgradesPanel.classList.toggle('active');
+    closeOtherPanels(upgradesPanel);
+    renderUpgradesPanel();
+  });
+
+  leaderboardBtn.addEventListener('click', () => {
+    leaderboardPanel.classList.toggle('active');
+    closeOtherPanels(leaderboardPanel);
+    if (socket) socket.emit('getLeaderboard');
+  });
+
+  buildingsBtn.addEventListener('click', () => {
+    buildingsPanel.classList.toggle('active');
+    closeOtherPanels(buildingsPanel);
+    renderBuildingsPanel();
+  });
+
   playersBtn.addEventListener('click', () => {
     playersPanel.classList.toggle('active');
-    helpPanel.classList.remove('active');
+    closeOtherPanels(playersPanel);
   });
 
   helpBtn.addEventListener('click', () => {
     helpPanel.classList.toggle('active');
-    playersPanel.classList.remove('active');
+    closeOtherPanels(helpPanel);
   });
 
   document.querySelectorAll('.close-btn').forEach(btn => {
@@ -99,22 +181,26 @@ function init() {
     });
   });
 
-  // Canvas events
   canvas.addEventListener('mousedown', handleMouseDown);
   canvas.addEventListener('mousemove', handleMouseMove);
   canvas.addEventListener('mouseup', handleMouseUp);
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('click', handleClick);
+  canvas.addEventListener('dblclick', handleDoubleClick);
 
-  // Keyboard pour déplacement
   window.addEventListener('keydown', handleKeyDown);
 
-  // Touch support
   canvas.addEventListener('touchstart', handleTouchStart);
   canvas.addEventListener('touchmove', handleTouchMove);
   canvas.addEventListener('touchend', handleTouchEnd);
 
   usernameInput.focus();
+}
+
+function closeOtherPanels(exceptPanel) {
+  [upgradesPanel, leaderboardPanel, buildingsPanel, playersPanel, helpPanel].forEach(panel => {
+    if (panel !== exceptPanel) panel.classList.remove('active');
+  });
 }
 
 function resizeCanvas() {
@@ -123,7 +209,6 @@ function resizeCanvas() {
   render();
 }
 
-// Rejoindre le jeu
 function joinGame() {
   const username = usernameInput.value.trim() || 'Joueur';
   const userId = getCookie('playerId');
@@ -141,14 +226,14 @@ function joinGame() {
 
     playerNameSpan.textContent = playerData.username;
     playerColorDiv.style.backgroundColor = playerData.color;
-    goldDisplay.textContent = `💰 ${playerData.gold}`;
+    updateGoldDisplay();
+    updateLevelDisplay();
 
     cameraX = playerData.x * CELL_SIZE - canvas.width / 2;
     cameraY = playerData.y * CELL_SIZE - canvas.height / 2;
 
-    data.onlinePlayers.forEach(p => {
-      players.set(p.id, p);
-    });
+    data.onlinePlayers.forEach(p => players.set(p.id, p));
+    leaderboard = data.leaderboard || [];
 
     loadChunk();
 
@@ -158,6 +243,9 @@ function joinGame() {
     render();
     updatePlayersList();
     updateCastleCost();
+    renderBuildingsPanel();
+    renderUpgradesPanel();
+    updateLeaderboard();
     
     showNotification(`Bienvenue ${playerData.username} !`);
   });
@@ -181,17 +269,53 @@ function joinGame() {
     updateCastleCost();
   });
 
+  socket.on('buildingUpgraded', (data) => {
+    const building = buildings.get(`${data.x},${data.y}`);
+    if (building) {
+      building.level = data.level;
+      render();
+    }
+  });
+
   socket.on('goldUpdate', (data) => {
     if (playerData) {
       playerData.gold = data.gold;
-      goldDisplay.textContent = `💰 ${playerData.gold}`;
+      updateGoldDisplay();
     }
+  });
+
+  socket.on('xpUpdate', (data) => {
+    if (playerData) {
+      playerData.xp = data.xp;
+      playerData.level = data.level;
+      updateLevelDisplay();
+      renderBuildingsPanel();
+    }
+  });
+
+  socket.on('upgradeUpdate', (data) => {
+    if (playerData) {
+      playerData.upgrades = data.upgrades;
+      renderUpgradesPanel();
+    }
+  });
+
+  socket.on('levelUp', (data) => {
+    playerData.level = data.level;
+    playerData.xp = data.xp;
+    updateLevelDisplay();
+    renderBuildingsPanel();
+    showNotification(`🎉 NIVEAU ${data.level} !`, false, 'levelup');
   });
 
   socket.on('positionUpdate', (data) => {
     if (playerData) {
       playerData.x = data.x;
       playerData.y = data.y;
+      
+      cameraX = playerData.x * CELL_SIZE - canvas.width / 2;
+      cameraY = playerData.y * CELL_SIZE - canvas.height / 2;
+      
       render();
     }
   });
@@ -201,7 +325,6 @@ function joinGame() {
     destroyTarget = { x: data.x, y: data.y };
     destroyIndicator.classList.add('active');
     
-    // Animer la barre
     const startTime = Date.now();
     const duration = data.duration;
     
@@ -259,24 +382,24 @@ function joinGame() {
     showNotification('Alliance créée !');
   });
 
+  socket.on('leaderboardUpdate', (data) => {
+    leaderboard = data;
+    updateLeaderboard();
+  });
+
   socket.on('error', (data) => {
     showNotification(data.message, true);
   });
 }
 
-// Charger un chunk
 function loadChunk() {
-  const centerX = Math.floor(playerData.x);
-  const centerY = Math.floor(playerData.y);
-
   socket.emit('loadChunk', {
-    x: centerX,
-    y: centerY,
+    x: Math.floor(playerData.x),
+    y: Math.floor(playerData.y),
     range: CHUNK_SIZE
   });
 }
 
-// Rendu
 function render() {
   if (!ctx) return;
 
@@ -286,8 +409,14 @@ function render() {
   ctx.save();
   ctx.translate(-cameraX, -cameraY);
 
-  // Grille
   drawGrid();
+
+  // Zone de spawn
+  ctx.fillStyle = 'rgba(255, 255, 0, 0.05)';
+  ctx.fillRect(-5 * CELL_SIZE, -5 * CELL_SIZE, 10 * CELL_SIZE, 10 * CELL_SIZE);
+  ctx.strokeStyle = 'rgba(255, 255, 0, 0.3)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(-5 * CELL_SIZE, -5 * CELL_SIZE, 10 * CELL_SIZE, 10 * CELL_SIZE);
 
   // Bâtiments
   buildings.forEach(building => {
@@ -297,35 +426,41 @@ function render() {
     ctx.fillStyle = building.color;
     ctx.fillRect(x, y, CELL_SIZE, CELL_SIZE);
     
-    // Bordure
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 2;
     ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
 
     // Icône
-    ctx.font = '20px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    if (building.type === 'wall') {
-      ctx.fillText('🧱', x + CELL_SIZE / 2, y + CELL_SIZE / 2);
-    } else if (building.type === 'tower') {
-      ctx.fillText('🗼', x + CELL_SIZE / 2, y + CELL_SIZE / 2);
-    } else if (building.type === 'castle') {
-      ctx.fillText('🏰', x + CELL_SIZE / 2, y + CELL_SIZE / 2);
+    const buildingData = BUILDINGS_DATA[building.type];
+    if (buildingData) {
+      ctx.font = '20px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(buildingData.icon, x + CELL_SIZE / 2, y + CELL_SIZE / 2);
+    }
+
+    // Niveau
+    if (building.level > 1) {
+      ctx.font = 'bold 10px Arial';
+      ctx.fillStyle = 'white';
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 2;
+      ctx.strokeText(`Lv${building.level}`, x + CELL_SIZE - 10, y + 10);
+      ctx.fillText(`Lv${building.level}`, x + CELL_SIZE - 10, y + 10);
     }
   });
 
   // Joueurs
   if (playerData) {
-    // Mon joueur en plus gros
     const myX = playerData.x * CELL_SIZE + CELL_SIZE / 2;
     const myY = playerData.y * CELL_SIZE + CELL_SIZE / 2;
 
-    // Grille des cases adjacentes
+    // Cases adjacentes (portée de construction)
+    const buildRange = (playerData.upgrades?.buildRange || 0) + 1;
     ctx.strokeStyle = 'rgba(255, 255, 0, 0.5)';
     ctx.lineWidth = 2;
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -buildRange; dx <= buildRange; dx++) {
+      for (let dy = -buildRange; dy <= buildRange; dy++) {
         if (dx === 0 && dy === 0) continue;
         const adjX = (playerData.x + dx) * CELL_SIZE;
         const adjY = (playerData.y + dy) * CELL_SIZE;
@@ -371,7 +506,6 @@ function render() {
   });
 
   ctx.restore();
-
   updateCoords();
 }
 
@@ -399,7 +533,75 @@ function drawGrid() {
   }
 }
 
-// Déplacement clavier
+function renderUpgradesPanel() {
+  if (!playerData) return;
+
+  upgradesContent.innerHTML = '<div class="upgrades-grid"></div>';
+  const grid = upgradesContent.querySelector('.upgrades-grid');
+
+  Object.entries(UPGRADES_DATA).forEach(([key, upgrade]) => {
+    const currentLevel = playerData.upgrades?.[key] || 0;
+    const cost = Math.floor(upgrade.baseCost * Math.pow(1.5, currentLevel));
+    const isMaxed = currentLevel >= upgrade.maxLevel;
+
+    const card = document.createElement('div');
+    card.className = `upgrade-card ${isMaxed ? 'maxed' : ''}`;
+    card.innerHTML = `
+      <div class="upgrade-icon">${upgrade.icon}</div>
+      <div class="upgrade-info">
+        <strong>${upgrade.name}</strong>
+        <p>${upgrade.desc}</p>
+        <div class="upgrade-level">Niveau ${currentLevel}/${upgrade.maxLevel}</div>
+        ${!isMaxed ? `<button class="upgrade-buy-btn" data-type="${key}">Améliorer (${cost}💰)</button>` : '<div class="maxed-badge">MAX</div>'}
+      </div>
+    `;
+
+    if (!isMaxed) {
+      card.querySelector('.upgrade-buy-btn').addEventListener('click', () => {
+        socket.emit('upgradePlayer', { upgradeType: key });
+      });
+    }
+
+    grid.appendChild(card);
+  });
+}
+
+function renderBuildingsPanel() {
+  if (!playerData) return;
+
+  buildingsContent.innerHTML = '<div class="buildings-grid"></div>';
+  const grid = buildingsContent.querySelector('.buildings-grid');
+
+  Object.entries(BUILDINGS_DATA).forEach(([key, building]) => {
+    const isUnlocked = playerData.level >= building.level;
+
+    const card = document.createElement('div');
+    card.className = `building-card ${isUnlocked ? 'unlocked' : 'locked'}`;
+    card.innerHTML = `
+      <div class="building-icon">${building.icon}</div>
+      <div class="building-info">
+        <strong>${building.name}</strong>
+        <div class="building-stats">
+          <div>💰 ${building.cost}</div>
+          <div>📊 ${building.income}💰/sec</div>
+        </div>
+        <small>${isUnlocked ? `✅ Niveau ${building.level}` : `🔒 Niveau ${building.level} requis`}</small>
+      </div>
+    `;
+
+    if (isUnlocked) {
+      card.addEventListener('click', () => {
+        selectedBuildingType = key;
+        destroyBtn.classList.remove('active');
+        showNotification(`Mode: Placer ${building.name}`);
+        buildingsPanel.classList.remove('active');
+      });
+    }
+
+    grid.appendChild(card);
+  });
+}
+
 function handleKeyDown(e) {
   if (!playerData || !socket) return;
 
@@ -421,16 +623,15 @@ function handleKeyDown(e) {
   socket.emit('move', { x: newX, y: newY });
 }
 
-// Interactions souris
 function handleMouseDown(e) {
-  if (e.button === 2) { // Clic droit
+  if (e.button === 2) {
     isDragging = true;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
     dragStartCamX = cameraX;
     dragStartCamY = cameraY;
     canvas.style.cursor = 'grabbing';
-  } else if (e.button === 0) { // Clic gauche
+  } else if (e.button === 0) {
     const rect = canvas.getBoundingClientRect();
     const clickX = e.clientX - rect.left + cameraX;
     const clickY = e.clientY - rect.top + cameraY;
@@ -438,12 +639,12 @@ function handleMouseDown(e) {
     const gridX = Math.floor(clickX / CELL_SIZE);
     const gridY = Math.floor(clickY / CELL_SIZE);
 
-    // Déplacement par clic
     if (!selectedBuildingType && !destroyBtn.classList.contains('active')) {
       if (playerData) {
+        const teleportRange = (playerData.upgrades?.teleport || 0) + 1;
         const dx = Math.abs(gridX - playerData.x);
         const dy = Math.abs(gridY - playerData.y);
-        if (dx <= 1 && dy <= 1 && !(dx === 0 && dy === 0)) {
+        if (dx <= teleportRange && dy <= teleportRange && !(dx === 0 && dy === 0)) {
           socket.emit('move', { x: gridX, y: gridY });
         }
       }
@@ -485,7 +686,22 @@ function handleClick(e) {
   }
 }
 
-// Touch support
+function handleDoubleClick(e) {
+  if (!playerData || !socket) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const clickX = e.clientX - rect.left + cameraX;
+  const clickY = e.clientY - rect.top + cameraY;
+
+  const gridX = Math.floor(clickX / CELL_SIZE);
+  const gridY = Math.floor(clickY / CELL_SIZE);
+
+  const building = buildings.get(`${gridX},${gridY}`);
+  if (building && building.player_id === playerData.id) {
+    socket.emit('upgradeBuilding', { x: gridX, y: gridY });
+  }
+}
+
 let touchStartX = 0, touchStartY = 0;
 let touchStartCamX = 0, touchStartCamY = 0;
 let isTouching = false;
@@ -518,11 +734,19 @@ function handleTouchEnd(e) {
   isTouching = false;
 }
 
-// UI
 function updateCoords() {
   if (playerData) {
     coordsDiv.textContent = `X: ${playerData.x}, Y: ${playerData.y}`;
   }
+}
+
+function updateGoldDisplay() {
+  goldDisplay.textContent = `💰 ${playerData.gold}`;
+}
+
+function updateLevelDisplay() {
+  const xpRequired = Math.floor(100 * Math.pow(1.5, playerData.level - 1));
+  levelDisplay.textContent = `⭐ Niv.${playerData.level} (${playerData.xp}/${xpRequired} XP)`;
 }
 
 function updateCastleCost() {
@@ -566,10 +790,37 @@ function updatePlayersList() {
   });
 }
 
-function showNotification(message, isError = false) {
+function updateLeaderboard() {
+  leaderboardContent.innerHTML = '';
+  
+  leaderboard.forEach((player, index) => {
+    const div = document.createElement('div');
+    div.className = 'leaderboard-item';
+    
+    const medals = ['🥇', '🥈', '🥉'];
+    const rank = index < 3 ? medals[index] : `#${index + 1}`;
+    
+    div.innerHTML = `
+      <div class="leaderboard-rank">${rank}</div>
+      <div class="leaderboard-player">
+        <div class="color-dot" style="background: ${player.color}"></div>
+        <strong>${player.username}</strong>
+      </div>
+      <div class="leaderboard-stats">
+        <div>🏰 ${player.castle_count || 0}</div>
+        <div>💰 ${player.gold}</div>
+        <div>🏗️ ${player.building_count || 0}</div>
+      </div>
+    `;
+    
+    leaderboardContent.appendChild(div);
+  });
+}
+
+function showNotification(message, isError = false, type = 'normal') {
   const div = document.createElement('div');
   div.className = 'notification';
-  div.style.borderLeftColor = isError ? '#d32f2f' : '#4caf50';
+  div.style.borderLeftColor = isError ? '#d32f2f' : type === 'levelup' ? '#667eea' : '#4caf50';
   div.textContent = message;
   
   document.getElementById('notifications').appendChild(div);
@@ -577,7 +828,6 @@ function showNotification(message, isError = false) {
   setTimeout(() => div.remove(), 3000);
 }
 
-// Cookies
 function setCookie(name, value, days) {
   const d = new Date();
   d.setTime(d.getTime() + days * 24 * 60 * 60 * 1000);
@@ -589,10 +839,8 @@ function getCookie(name) {
   return match ? match[2] : null;
 }
 
-// Lancer le jeu
 window.addEventListener('DOMContentLoaded', init);
 
-// Render loop
 setInterval(() => {
   if (playerData) render();
 }, 1000 / 30);

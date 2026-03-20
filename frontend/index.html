@@ -28,9 +28,13 @@
           <div id="playerColor" class="color-box"></div>
         </div>
         <div id="goldDisplay" class="gold">💰 0</div>
+        <div id="levelDisplay" class="level">⭐ Niv.1 (0/100 XP)</div>
       </div>
       
       <div class="hud-right">
+        <button id="upgradesBtn" class="hud-btn">⚡ Améliorations</button>
+        <button id="leaderboardBtn" class="hud-btn">🏆 Classement</button>
+        <button id="buildingsBtn" class="hud-btn">🏗️ Bâtiments</button>
         <button id="playersBtn" class="hud-btn">👥 Joueurs</button>
         <button id="helpBtn" class="hud-btn">❓</button>
       </div>
@@ -71,6 +75,33 @@
       <button id="cancelDestroy" class="cancel-btn">✕ Annuler</button>
     </div>
 
+    <!-- Panel Améliorations Personnage -->
+    <div id="upgradesPanel" class="panel large-panel">
+      <div class="panel-header">
+        <h3>⚡ Améliorations du Personnage</h3>
+        <button class="close-btn">✕</button>
+      </div>
+      <div class="panel-content" id="upgradesContent"></div>
+    </div>
+
+    <!-- Leaderboard -->
+    <div id="leaderboardPanel" class="panel">
+      <div class="panel-header">
+        <h3>🏆 Classement</h3>
+        <button class="close-btn">✕</button>
+      </div>
+      <div id="leaderboardContent" class="panel-content"></div>
+    </div>
+
+    <!-- Bâtiments débloquables -->
+    <div id="buildingsPanel" class="panel large-panel scrollable">
+      <div class="panel-header">
+        <h3>🏗️ Bâtiments (29 types)</h3>
+        <button class="close-btn">✕</button>
+      </div>
+      <div class="panel-content" id="buildingsContent"></div>
+    </div>
+
     <!-- Liste des joueurs -->
     <div id="playersPanel" class="panel">
       <div class="panel-header">
@@ -81,29 +112,37 @@
     </div>
 
     <!-- Aide -->
-    <div id="helpPanel" class="panel">
+    <div id="helpPanel" class="panel large-panel scrollable">
       <div class="panel-header">
         <h3>❓ Comment jouer</h3>
         <button class="close-btn">✕</button>
       </div>
       <div class="panel-content">
         <h4>🎮 Déplacement</h4>
-        <p><strong>Flèches directionnelles</strong> : Se déplacer</p>
-        <p><strong>Clic + Drag</strong> : Glisser sur la carte</p>
+        <p><strong>Flèches</strong> : Se déplacer case par case</p>
+        <p><strong>Clic + Drag</strong> : Glisser la carte</p>
+        <p>La caméra suit automatiquement ton personnage !</p>
         
-        <h4>🏗️ Bâtiments</h4>
-        <p><strong>🧱 Mur (20💰)</strong> : Bloque le passage, 5s à détruire, +1💰</p>
-        <p><strong>🗼 Tour (15💰)</strong> : +2💰/sec, 3s à détruire, +10💰</p>
-        <p><strong>🏰 Château (50+💰)</strong> : +1💰/tour, coût x2, +100×tours/châteaux💰</p>
+        <h4>🏗️ 29 Types de Bâtiments</h4>
+        <p>Déblocables du niveau 1 au niveau 40</p>
+        <p>Voir l'onglet 🏗️ Bâtiments pour la liste complète</p>
+        
+        <h4>⚡ Améliorations Personnage</h4>
+        <p><strong>⚡ Vitesse</strong> : Déplace-toi plus vite</p>
+        <p><strong>🌀 Téléportation</strong> : Portée de déplacement</p>
+        <p><strong>💥 Destruction</strong> : Détruis plus vite</p>
+        <p><strong>💰 Mult. Or</strong> : +10% or par niveau</p>
+        <p><strong>⭐ Mult. XP</strong> : +15% XP par niveau</p>
+        <p><strong>🔨 Portée</strong> : Construis plus loin</p>
+        <p><strong>🤖 Auto</strong> : Collecte or auto</p>
+        <p><strong>🛡️ Bouclier</strong> : +20% HP bâtiments</p>
+        
+        <h4>⬆️ Amélioration</h4>
+        <p>Double-clic sur bâtiment adjacent → Améliorer</p>
         
         <h4>⚡ Règles</h4>
-        <p>• Place/détruis UNIQUEMENT adjacent à toi</p>
-        <p>• Tu génères 1💰/sec de base</p>
-        <p>• Les murs bloquent tous les joueurs</p>
-        <p>• Maintiens clic sur bâtiment pour détruire</p>
-        
-        <h4>🤝 Alliances</h4>
-        <p>Clique sur un joueur pour créer une alliance.</p>
+        <p>• Zone 10×10 au spawn protégée</p>
+        <p>• Place/détruis selon portée</p>
       </div>
     </div>
 

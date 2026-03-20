@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🌍 PixelWorld - Monde Infini</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Écran de login -->
+  <div id="loginScreen" class="screen active">
+    <div class="login-box">
+      <h1>🌍 PixelWorld</h1>
+      <p class="subtitle">Monde infini multijoueur</p>
+      <input type="text" id="usernameInput" placeholder="Ton pseudo" maxlength="15">
+      <button id="joinBtn">REJOINDRE</button>
+    </div>
+  </div>
+
+  <!-- Jeu -->
+  <div id="gameScreen" class="screen">
+    <!-- HUD -->
+    <div id="hud">
+      <div class="hud-left">
+        <div id="coords" class="coords">X: 0, Y: 0</div>
+        <div id="playerInfo">
+          <span id="playerName">Joueur</span>
+          <div id="playerColor" class="color-box"></div>
+        </div>
+        <div id="goldDisplay" class="gold">💰 0</div>
+      </div>
+      
+      <div class="hud-right">
+        <button id="playersBtn" class="hud-btn">👥 Joueurs</button>
+        <button id="helpBtn" class="hud-btn">❓</button>
+      </div>
+    </div>
+
+    <!-- Canvas -->
+    <canvas id="canvas"></canvas>
+
+    <!-- Panneau d'outils -->
+    <div id="toolbar">
+      <div class="tool-group">
+        <button class="build-btn" data-type="wall">
+          <div class="icon">🧱</div>
+          <div class="label">Mur</div>
+          <div class="cost">20💰</div>
+        </button>
+        <button class="build-btn" data-type="tower">
+          <div class="icon">🗼</div>
+          <div class="label">Tour</div>
+          <div class="cost">15💰</div>
+        </button>
+        <button class="build-btn" data-type="castle">
+          <div class="icon">🏰</div>
+          <div class="label">Château</div>
+          <div class="cost" id="castleCost">50💰</div>
+        </button>
+      </div>
+      
+      <button id="destroyBtn" class="destroy-btn">💥 Détruire</button>
+    </div>
+
+    <!-- Indicateur de destruction -->
+    <div id="destroyIndicator" class="destroy-indicator">
+      <div class="destroy-text">Destruction...</div>
+      <div class="destroy-progress">
+        <div id="destroyBar" class="destroy-bar"></div>
+      </div>
+      <button id="cancelDestroy" class="cancel-btn">✕ Annuler</button>
+    </div>
+
+    <!-- Liste des joueurs -->
+    <div id="playersPanel" class="panel">
+      <div class="panel-header">
+        <h3>👥 Joueurs en ligne</h3>
+        <button class="close-btn">✕</button>
+      </div>
+      <div id="playersList"></div>
+    </div>
+
+    <!-- Aide -->
+    <div id="helpPanel" class="panel">
+      <div class="panel-header">
+        <h3>❓ Comment jouer</h3>
+        <button class="close-btn">✕</button>
+      </div>
+      <div class="panel-content">
+        <h4>🎮 Déplacement</h4>
+        <p><strong>Flèches directionnelles</strong> : Se déplacer</p>
+        <p><strong>Clic + Drag</strong> : Glisser sur la carte</p>
+        
+        <h4>🏗️ Bâtiments</h4>
+        <p><strong>🧱 Mur (20💰)</strong> : Bloque le passage, 5s à détruire, +1💰</p>
+        <p><strong>🗼 Tour (15💰)</strong> : +2💰/sec, 3s à détruire, +10💰</p>
+        <p><strong>🏰 Château (50+💰)</strong> : +1💰/tour, coût x2, +100×tours/châteaux💰</p>
+        
+        <h4>⚡ Règles</h4>
+        <p>• Place/détruis UNIQUEMENT adjacent à toi</p>
+        <p>• Tu génères 1💰/sec de base</p>
+        <p>• Les murs bloquent tous les joueurs</p>
+        <p>• Maintiens clic sur bâtiment pour détruire</p>
+        
+        <h4>🤝 Alliances</h4>
+        <p>Clique sur un joueur pour créer une alliance.</p>
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div id="notifications"></div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

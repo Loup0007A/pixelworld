@@ -4,7 +4,6 @@ const { Server } = require('socket.io');
 const Database = require('better-sqlite3');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -23,15 +22,18 @@ db.exec(`
     color TEXT,
     x INTEGER DEFAULT 0,
     y INTEGER DEFAULT 0,
+    gold INTEGER DEFAULT 0,
     created_at INTEGER
   );
 
-  CREATE TABLE IF NOT EXISTS blocks (
+  CREATE TABLE IF NOT EXISTS buildings (
     x INTEGER,
     y INTEGER,
     type TEXT,
     color TEXT,
     player_id TEXT,
+    hp INTEGER DEFAULT 0,
+    created_at INTEGER,
     PRIMARY KEY (x, y)
   );
 
@@ -41,31 +43,45 @@ db.exec(`
     created_at INTEGER,
     PRIMARY KEY (player1_id, player2_id)
   );
-
-  CREATE TABLE IF NOT EXISTS pixels (
-    x INTEGER,
-    y INTEGER,
-    color TEXT,
-    player_id TEXT,
-    PRIMARY KEY (x, y)
-  );
 `);
+
+// Constantes de jeu
+const BUILDING_COSTS = {
+  wall: 20,
+  tower: 15,
+  castle: (numCastles) => 50 * Math.pow(2, numCastles) // Coût exponentiel
+};
+
+const BUILDING_HP = {
+  wall: 5,  // 5 secondes à détruire (1 HP/sec)
+  tower: 3,
+  castle: 10
+};
+
+const GOLD_REWARDS = {
+  wall: 1,
+  tower: 10,
+  castle: (numTowers, numCastles) => 100 * numTowers / Math.max(numCastles, 1)
+};
 
 // Préparer les requêtes
 const getPlayer = db.prepare('SELECT * FROM players WHERE id = ?');
-const createPlayer = db.prepare('INSERT INTO players (id, username, color, x, y, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+const createPlayer = db.prepare('INSERT INTO players (id, username, color, x, y, gold, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
 const updatePlayerPos = db.prepare('UPDATE players SET x = ?, y = ? WHERE id = ?');
-const getBlocksNear = db.prepare('SELECT * FROM blocks WHERE x BETWEEN ? AND ? AND y BETWEEN ? AND ?');
-const placeBlock = db.prepare('INSERT OR REPLACE INTO blocks (x, y, type, color, player_id) VALUES (?, ?, ?, ?, ?)');
-const removeBlock = db.prepare('DELETE FROM blocks WHERE x = ? AND y = ?');
-const getBlock = db.prepare('SELECT * FROM blocks WHERE x = ? AND y = ?');
-const getAlliances = db.prepare('SELECT * FROM alliances WHERE player1_id = ? OR player2_id = ?');
+const updatePlayerGold = db.prepare('UPDATE players SET gold = ? WHERE id = ?');
+const getBuildingsNear = db.prepare('SELECT * FROM buildings WHERE x BETWEEN ? AND ? AND y BETWEEN ? AND ?');
+const getAllBuildingsByPlayer = db.prepare('SELECT * FROM buildings WHERE player_id = ?');
+const placeBuilding = db.prepare('INSERT OR REPLACE INTO buildings (x, y, type, color, player_id, hp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+const removeBuilding = db.prepare('DELETE FROM buildings WHERE x = ? AND y = ?');
+const getBuilding = db.prepare('SELECT * FROM buildings WHERE x = ? AND y = ?');
+const updateBuildingHP = db.prepare('UPDATE buildings SET hp = ? WHERE x = ? AND y = ?');
+const getAlliances = db.prepare('SELECT player2_id FROM alliances WHERE player1_id = ?');
 const createAlliance = db.prepare('INSERT OR IGNORE INTO alliances (player1_id, player2_id, created_at) VALUES (?, ?, ?)');
-const getPixelsNear = db.prepare('SELECT * FROM pixels WHERE x BETWEEN ? AND ? AND y BETWEEN ? AND ?');
-const setPixel = db.prepare('INSERT OR REPLACE INTO pixels (x, y, color, player_id) VALUES (?, ?, ?, ?)');
+const getAllPlayers = db.prepare('SELECT * FROM players');
 
 // Connexion des joueurs
 const players = new Map(); // socketId -> playerData
+const destroyingBuildings = new Map(); // "x,y" -> {playerId, startTime, building}
 
 io.on('connection', (socket) => {
   let playerId = null;
@@ -73,35 +89,31 @@ io.on('connection', (socket) => {
   socket.on('join', (data) => {
     const { userId, username } = data;
     
-    // Générer ID si nouveau
     playerId = userId || crypto.randomUUID();
     
     let player = getPlayer.get(playerId);
     
     if (!player) {
-      // Nouveau joueur
       const color = `#${Math.floor(Math.random()*16777215).toString(16)}`;
-      createPlayer.run(playerId, username || 'Joueur', color, 0, 0, Date.now());
+      createPlayer.run(playerId, username || 'Joueur', color, 0, 0, 0, Date.now());
       player = getPlayer.get(playerId);
     }
 
-    // Stocker le joueur connecté
     players.set(socket.id, { 
       id: player.id, 
       username: player.username,
       color: player.color,
       x: player.x,
-      y: player.y 
+      y: player.y,
+      gold: player.gold
     });
 
-    // Envoyer les données au joueur
     socket.emit('init', {
       playerId: player.id,
       player: player,
       onlinePlayers: Array.from(players.values())
     });
 
-    // Notifier les autres
     socket.broadcast.emit('playerJoined', {
       id: player.id,
       username: player.username,
@@ -113,103 +125,136 @@ io.on('connection', (socket) => {
     console.log(`${player.username} rejoint (${socket.id})`);
   });
 
-  // Charger les blocs autour du joueur
+  // Charger les bâtiments autour du joueur
   socket.on('loadChunk', (data) => {
     const { x, y, range } = data;
     const halfRange = range / 2;
     
-    const blocks = getBlocksNear.all(
+    const buildings = getBuildingsNear.all(
       x - halfRange, x + halfRange,
       y - halfRange, y + halfRange
     );
 
-    const pixels = getPixelsNear.all(
-      x - halfRange, x + halfRange,
-      y - halfRange, y + halfRange
-    );
-
-    socket.emit('chunkData', { blocks, pixels });
+    socket.emit('chunkData', { buildings });
   });
 
-  // Placer un bloc
-  socket.on('placeBlock', (data) => {
+  // Vérifier si une position est adjacente au joueur
+  function isAdjacent(playerX, playerY, targetX, targetY) {
+    const dx = Math.abs(playerX - targetX);
+    const dy = Math.abs(playerY - targetY);
+    return (dx <= 1 && dy <= 1) && !(dx === 0 && dy === 0);
+  }
+
+  // Placer un bâtiment
+  socket.on('placeBuilding', (data) => {
     const player = players.get(socket.id);
     if (!player) return;
 
     const { x, y, type } = data;
     
-    placeBlock.run(x, y, type, player.color, player.id);
+    // Vérifier adjacence
+    if (!isAdjacent(player.x, player.y, x, y)) {
+      socket.emit('error', { message: 'Trop loin ! Place uniquement adjacent à toi.' });
+      return;
+    }
+
+    // Vérifier si case occupée
+    const existing = getBuilding.get(x, y);
+    if (existing) {
+      socket.emit('error', { message: 'Case occupée !' });
+      return;
+    }
+
+    // Vérifier si c'est la position du joueur
+    if (x === player.x && y === player.y) {
+      socket.emit('error', { message: 'Tu es sur cette case !' });
+      return;
+    }
+
+    // Calculer le coût
+    let cost = 0;
+    if (type === 'castle') {
+      const playerBuildings = getAllBuildingsByPlayer.all(player.id);
+      const numCastles = playerBuildings.filter(b => b.type === 'castle').length;
+      cost = BUILDING_COSTS.castle(numCastles);
+    } else {
+      cost = BUILDING_COSTS[type];
+    }
+
+    // Vérifier l'or
+    if (player.gold < cost) {
+      socket.emit('error', { message: `Pas assez d'or ! Besoin de ${cost}` });
+      return;
+    }
+
+    // Déduire l'or
+    player.gold -= cost;
+    updatePlayerGold.run(player.gold, player.id);
+
+    // Placer le bâtiment
+    const hp = BUILDING_HP[type];
+    placeBuilding.run(x, y, type, player.color, player.id, hp, Date.now());
     
-    io.emit('blockPlaced', { 
+    io.emit('buildingPlaced', { 
       x, y, type, 
       color: player.color, 
-      playerId: player.id 
+      playerId: player.id,
+      hp
     });
+
+    socket.emit('goldUpdate', { gold: player.gold });
   });
 
-  // Détruire un bloc
-  socket.on('destroyBlock', (data) => {
+  // Commencer à détruire un bâtiment
+  socket.on('startDestroy', (data) => {
+    const player = players.get(socket.id);
+    if (!player) return;
+
     const { x, y } = data;
-    const block = getBlock.get(x, y);
     
-    if (!block) return;
-
-    const player = players.get(socket.id);
-    if (!player) return;
-
-    // Vérifier si le joueur peut détruire (son bloc ou allié)
-    const alliances = getAlliances.all(player.id);
-    const canDestroy = block.player_id === player.id || 
-                       alliances.some(a => a.player1_id === block.player_id || a.player2_id === block.player_id);
-
-    if (canDestroy) {
-      removeBlock.run(x, y);
-      io.emit('blockDestroyed', { x, y });
+    // Vérifier adjacence
+    if (!isAdjacent(player.x, player.y, x, y)) {
+      socket.emit('error', { message: 'Trop loin pour détruire !' });
+      return;
     }
-  });
 
-  // Dessiner pixel
-  socket.on('drawPixel', (data) => {
-    const player = players.get(socket.id);
-    if (!player) return;
-
-    const { x, y, color } = data;
-    
-    // Vérifier que la case appartient au joueur
-    const block = getBlock.get(x, y);
-    if (!block || block.player_id !== player.id) return;
-
-    setPixel.run(x, y, color, player.id);
-    io.emit('pixelDrawn', { x, y, color, playerId: player.id });
-  });
-
-  // Créer alliance
-  socket.on('createAlliance', (data) => {
-    const player = players.get(socket.id);
-    if (!player) return;
-
-    const { targetPlayerId } = data;
-    
-    // Créer alliance bidirectionnelle
-    createAlliance.run(player.id, targetPlayerId, Date.now());
-    createAlliance.run(targetPlayerId, player.id, Date.now());
-
-    // Notifier les deux joueurs
-    const targetSocket = Array.from(players.entries())
-      .find(([_, p]) => p.id === targetPlayerId);
-    
-    socket.emit('allianceCreated', { playerId: targetPlayerId });
-    if (targetSocket) {
-      io.to(targetSocket[0]).emit('allianceCreated', { playerId: player.id });
+    const building = getBuilding.get(x, y);
+    if (!building) {
+      socket.emit('error', { message: 'Aucun bâtiment ici !' });
+      return;
     }
+
+    const key = `${x},${y}`;
+    destroyingBuildings.set(key, {
+      playerId: player.id,
+      startTime: Date.now(),
+      building: building
+    });
+
+    socket.emit('destroyStarted', { x, y, duration: building.hp * 1000 });
   });
 
-  // Mise à jour position
+  // Annuler la destruction
+  socket.on('cancelDestroy', (data) => {
+    const { x, y } = data;
+    const key = `${x},${y}`;
+    destroyingBuildings.delete(key);
+  });
+
+  // Bouger le joueur
   socket.on('move', (data) => {
     const player = players.get(socket.id);
     if (!player) return;
 
     const { x, y } = data;
+
+    // Vérifier s'il y a un mur
+    const building = getBuilding.get(x, y);
+    if (building && building.type === 'wall') {
+      socket.emit('error', { message: 'Un mur bloque le passage !' });
+      return;
+    }
+
     player.x = x;
     player.y = y;
 
@@ -219,9 +264,30 @@ io.on('connection', (socket) => {
       id: player.id,
       x, y
     });
+
+    socket.emit('positionUpdate', { x, y });
   });
 
-  // Obtenir liste joueurs en ligne
+  // Créer alliance
+  socket.on('createAlliance', (data) => {
+    const player = players.get(socket.id);
+    if (!player) return;
+
+    const { targetPlayerId } = data;
+    
+    createAlliance.run(player.id, targetPlayerId, Date.now());
+    createAlliance.run(targetPlayerId, player.id, Date.now());
+
+    const targetSocket = Array.from(players.entries())
+      .find(([_, p]) => p.id === targetPlayerId);
+    
+    socket.emit('allianceCreated', { playerId: targetPlayerId });
+    if (targetSocket) {
+      io.to(targetSocket[0]).emit('allianceCreated', { playerId: player.id });
+    }
+  });
+
+  // Obtenir liste joueurs
   socket.on('getPlayers', () => {
     socket.emit('playersList', Array.from(players.values()));
   });
@@ -236,6 +302,85 @@ io.on('connection', (socket) => {
     }
   });
 });
+
+
+// Génération d'or (1/sec de base)
+setInterval(() => {
+  players.forEach(player => {
+    // 1 or de base
+    let goldPerSec = 1;
+
+    // Calculer les bonus des bâtiments
+    const playerBuildings = getAllBuildingsByPlayer.all(player.id);
+    const towers = playerBuildings.filter(b => b.type === 'tower');
+    const castles = playerBuildings.filter(b => b.type === 'castle');
+
+    // Tours : 2 or/sec chacune
+    goldPerSec += towers.length * 2;
+
+    // Châteaux : autant d'or que de tours
+    goldPerSec += castles.length * towers.length;
+
+    player.gold += goldPerSec;
+    updatePlayerGold.run(player.gold, player.id);
+
+    // Envoyer mise à jour
+    const socketId = Array.from(players.entries()).find(([_, p]) => p.id === player.id)?.[0];
+    if (socketId) {
+      io.to(socketId).emit('goldUpdate', { gold: player.gold });
+    }
+  });
+}, 1000);
+
+// Vérifier les destructions en cours
+setInterval(() => {
+  const now = Date.now();
+  
+  destroyingBuildings.forEach((data, key) => {
+    const elapsed = now - data.startTime;
+    const requiredTime = data.building.hp * 1000; // hp secondes en ms
+
+    if (elapsed >= requiredTime) {
+      // Destruction terminée
+      const [x, y] = key.split(',').map(Number);
+      const building = getBuilding.get(x, y);
+      
+      if (building) {
+        // Calculer récompense
+        let reward = 0;
+        if (building.type === 'wall') {
+          reward = GOLD_REWARDS.wall;
+        } else if (building.type === 'tower') {
+          reward = GOLD_REWARDS.tower;
+        } else if (building.type === 'castle') {
+          const playerBuildings = getAllBuildingsByPlayer.all(building.player_id);
+          const numTowers = playerBuildings.filter(b => b.type === 'tower').length;
+          const numCastles = playerBuildings.filter(b => b.type === 'castle').length;
+          reward = GOLD_REWARDS.castle(numTowers, numCastles);
+        }
+
+        // Donner la récompense
+        const destroyer = players.get(Array.from(players.entries()).find(([_, p]) => p.id === data.playerId)?.[0]);
+        if (destroyer) {
+          destroyer.gold += reward;
+          updatePlayerGold.run(destroyer.gold, destroyer.id);
+          
+          const socketId = Array.from(players.entries()).find(([_, p]) => p.id === destroyer.id)?.[0];
+          if (socketId) {
+            io.to(socketId).emit('goldUpdate', { gold: destroyer.gold });
+            io.to(socketId).emit('destroyComplete', { x, y, reward });
+          }
+        }
+
+        // Supprimer le bâtiment
+        removeBuilding.run(x, y);
+        io.emit('buildingDestroyed', { x, y });
+      }
+
+      destroyingBuildings.delete(key);
+    }
+  });
+}, 100); // Vérifier toutes les 100ms
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
